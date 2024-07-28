@@ -145,4 +145,67 @@ PING 192.168.30.1 (192.168.30.1) 56(84) bytes of data.
 2 packets transmitted, 2 received, 0% packet loss, time 1009ms
 rtt min/avg/max/mdev = 0.287/0.351/0.415/0.064 ms
 ```
-14. 
+## Настройка асимметричного роутинга
+1. Для настройки асимметричного роутинга необходимо выключить блокировку асимметричной маршрутизации:
+```
+sudo sysctl net.ipv4.conf.all.rp_filter=0
+```
+2. стоимости интерфейса enp0s8 на router1:
+```
+root@router1:~# vtysh
+Hello, this is FRRouting (version 8.1).
+Copyright 1996-2005 Kunihiro Ishiguro, et al.
+router1# conf t
+router1(config)# int enp0s8
+router1(config-if)# ip ospf cost 1000
+router1(config-if)# exit
+router1(config)# exit
+```
+3. Проверка асимметричного роутинга. Видно, что из-за увеличения стоимости интерфейса enp0s8 на router1, ICMP-запросы стали проходить через его интерфейс enp0s9 до роутера router3 и далее через router2 в сеть 192.168.20.0/24. Однако ICMP-ответы направляются обратно через интерфейс enp0s8 router1.
+```
+root@router1:~# ping -I 192.168.10.1 192.168.20.1
+PING 192.168.20.1 (192.168.20.1) from 192.168.10.1 : 56(84) bytes of data.
+64 bytes from 192.168.20.1: icmp_seq=1 ttl=64 time=0.270 ms
+64 bytes from 192.168.20.1: icmp_seq=2 ttl=64 time=0.665 ms
+64 bytes from 192.168.20.1: icmp_seq=3 ttl=64 time=0.394 ms
+...
+
+root@router2:~# tcpdump -i enp0s9 icmp 
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on enp0s9, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+13:30:23.181520 IP 192.168.10.1 > router2: ICMP echo request, id 8, seq 1, length 64
+13:30:24.209886 IP 192.168.10.1 > router2: ICMP echo request, id 8, seq 2, length 64
+13:30:25.233903 IP 192.168.10.1 > router2: ICMP echo request, id 8, seq 3, length 64
+
+root@router2:~# tcpdump -i enp0s8 icmp 
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on enp0s8, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+13:31:11.185987 IP router2 > 192.168.10.1: ICMP echo reply, id 8, seq 48, length 64
+13:31:12.209997 IP router2 > 192.168.10.1: ICMP echo reply, id 8, seq 49, length 64
+13:31:13.233993 IP router2 > 192.168.10.1: ICMP echo reply, id 8, seq 50, length 64
+``` 
+4. Настройка симметричного роутинга с дорогим линком. ак как router2 при асимметричной маршрутизации отправлял обратно трафик через интерфейс enp0s8, этот интерфейс необходимо сделать дорогим.
+```
+router2# conf t
+router2(config)# int enp0s8
+router2(config-if)# ip ospf cost 1000
+router2(config-if)# exit
+router2(config)# exit
+``` 
+5. Проверка работы симметричного роутинга:
+```
+root@router1:~# ping -I 192.168.10.1 192.168.20.1
+PING 192.168.20.1 (192.168.20.1) from 192.168.10.1 : 56(84) bytes of data.
+64 bytes from 192.168.20.1: icmp_seq=1 ttl=64 time=0.270 ms
+64 bytes from 192.168.20.1: icmp_seq=2 ttl=64 time=0.665 ms
+64 bytes from 192.168.20.1: icmp_seq=3 ttl=64 time=0.394 ms
+...
+
+root@router2:~# tcpdump -i enp0s9 icmp
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on enp0s9, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+13:56:21.393987 IP 192.168.10.1 > router2: ICMP echo request, id 11, seq 42, length 64
+13:56:21.394014 IP router2 > 192.168.10.1: ICMP echo reply, id 11, seq 42, length 64
+13:56:22.417847 IP 192.168.10.1 > router2: ICMP echo request, id 11, seq 43, length 64
+13:56:22.417870 IP router2 > 192.168.10.1: ICMP echo reply, id 11, seq 43, length 64
+```
